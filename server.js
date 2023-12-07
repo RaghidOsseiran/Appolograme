@@ -1,249 +1,186 @@
-const fs = require('fs');
-const express = require('express');
-const host = 'localhost';
-const port = 8080 ;
-
-const app = express();
-
-
 const { Client } = require('pg');
-const { normalize } = require('path');
+const fs = require('fs');
+const http = require('http');
+const port = 8080;
+const host = 'localhost';
+
+
+const server = http.createServer();
 
 const client = new Client({
-    user: 'postgres',
-    password: 'Hunterxhunter04',
-    database: 'photo',
-    port: 5432
-})
+  user: 'postgres',
+  password: 'Hunterxhunter04', 
+  database: 'appologram',
+  port: 5432
+});
+
+
 
 client.connect()
 .then(() => {
     console.log('Connected to database');
 })
-.catch((e) => {
-    console.log('Error connection to database');
-    console.log(e);
+.catch((erreur) => {
+    console.log('Erorr connecting to database');
 });
 
 
-app.use('/public', express.static('public'));
 
-app.get('/', (req,res) => {
-    res.redirect('/mur-images');
-})
-
-app.get('/mur-images/', async (req,res) =>{
+server.on ("request", async (req,res) => {
+  if (req.url.startsWith('/public/')){
     try{
-        const sqlQuery = await client.query("SELECT fichier FROM photos ORDER BY id");
-        const sqlQuery2 = await client.query("SELECT id FROM photos ORDER BY id");
-        const fichierImage = sqlQuery.rows.map(row => row.fichier);
-        const fichierID = sqlQuery2.rows.map(row => row.id);
-
-        res.render('mur', {images: fichierImage, id: fichierID});
-
-    } catch(e) {
-        console.log(e);
+      const fichier = fs.readFileSync("."+req.url);
+      res.end(fichier);
+    } catch(err){
+      console.log("Error, we couldnt find the ressource in public");
+      res.end(err);
     }
+
+  } else if (req.url === ("/") || req.url.startsWith("/index") || req.url === ("/images")){
+    res.end(fs.readFileSync("./public/index.html"));
+
+  } else if (req.method === "POST" && req.url === '/register-successful' ){
+    let pageRes = `<!DOCTYPE HTML><html><body><a href="/public/index.html"><button>Back to page</button></a><p>You have registered successfully!</p></body></html>`;
+    let data;
+    req.on('data', (dataChunk) => {
+      data += dataChunk.toString();
+    })
+    req.on('end', async ()=>{
+      const dataSplit = data.split('&');
+      const userReg = dataSplit[0].split('=')[1];
+      const passReg = dataSplit[1].split('=')[1];
+      const queryVal = await client.query("Select count(*) from utilisateurs where username = '"+userReg+"'");
+      const queryValidation = parseInt(queryVal.rows.map(row => row.count));
+      console.log(queryValidation);
+      if (queryValidation >= 1){
+        let pageRes2 = `<!DOCTYPE HTML><html><body><a href="/public/index.html"><button>Back to page</button></a><p>There is already a user with the same name, register failed.</p></body></html>`;
+        res.end(pageRes2);
+      } else {
+        const queryValid = "Insert into utilisateurs (username, pass) Values ('"+userReg+"','"+passReg+"')";
+        client.query(queryValid);
+        res.end(pageRes);
+      }
+    })
+
+  } else if (req.method === 'POST' && req.url === '/login-successful'){
+    let pageLog = `<!DOCTYPE HTML>
+    <html>
+      <body>
+        <a href="/public/index.html"><button>Back to page</button></a>`;
+    let data2;
+    req.on('data', (dataChunk) => {
+      data2 += dataChunk.toString();
+    })
+    req.on('end', async ()=>{
+      const dataSplit = data2.split('&');
+      const userLog = dataSplit[0].split('=')[1];
+      const passLog = dataSplit[1].split('=')[1];
+
+      const queryVal = await client.query("Select Exists(Select * from utilisateurs where username= '"+userLog+"' and pass = '"+passLog+"' )");
+      const queryValidation = queryVal.rows.map(row => row.exists);
+      console.log(queryValidation.toString());
+
+      if (queryValidation.toString() === ('false')){
+        let pageLog2 = `<!DOCTYPE HTML><html><body><a href="/public/index.html"><button>Back to page</button></a><p>Account does not exist, please register before logging in.</p><a href='/public/register.html'><button>Click here to register!</button></a></body></html>`;
+        res.end(pageLog2);
+      } else {
+        pageLog += `<a href="/user/`+userLog/*.replace("user","")*/+`"><p>Logged in as user: ${userLog}</p></a></body></html>`;
+        res.end(pageLog);
+      }
+  })
+
+  } else if (req.url.startsWith('/user/') && req.method === 'GET'){
+    const userName = (req.url.split('/')[2]);
+    const userID = (userName.replace("user",""));
+    console.log(userID);
+
+    const queryPath = await client.query("select file_path from images as i cross join utilisateurs as u where u.username = i.username_fk and u.username = 'user"+userID+"'");
+    const queryPathRes = queryPath.rows.map(row => row.file_path);
+    console.log(queryPathRes);
+
+    let pageUser = `<!DOCTYPE HTML><html><head><link rel="stylesheet" href="/public/images.css"></head>`;
+    pageUser += `<body>`;
+    pageUser += `<a href="/public/index.html"><button>Logout</button></a>`
+    pageUser += `<span><button>Add an image</button></span>`;
+
+    const pp = await client.query("Select pp from utilisateurs where username = '"+userName+"'");
+    const ppRes = pp.rows.map(row => row.pp);
+
+    pageUser += '<img style="display:block; text-align:center;margin:auto; width: 100px; height:100px;border: solid black; border-radius: 40px; margin-bottom: 20px;" src="'+ppRes+'">';
+    pageUser += '<div class="container">';
+        
+    for(let i = 0; i < queryPathRes.length; i++){
+      pageUser += '<div class="item"><img class="omak" src='+queryPathRes[i]+'><div class="like"><a href="/liked/'+userName+'"><button id="like-button"><img class="image-inlike" src="/public/Joah.jpg"></button></a></div></div>';
+    }
+    pageUser += '</div><p style="font-size: 0px;" id="user-id">'+userName+'</p>'
+    pageUser += `<script src="/public/test.js"></script>`;
+    pageUser += '</body></html>';
+    res.end(pageUser);
+
+
+  } else if (req.method === 'POST' && req.url.startsWith('/user/')){
+    const userID = (req.url.split('/')[2]);
+    console.log(userID);
+    let data3;
+    req.on('data', (dataChunk) =>{
+      data3 += dataChunk.toString();
+    });
+    req.on("end", async () =>{
+      let pageUser = `<!DOCTYPE HTML><html><head><link rel="stylesheet" href="/public/images.css"></head>`;
+      pageUser += `<body>`;
+      pageUser += `<a href="/public/index.html"><button>Logout</button></a>`
+      pageUser += `<span><button>Add an image</button></span>`;
+
+      const pp = await client.query("Select pp from utilisateurs where username = '"+userID+"'");
+      const ppRes = pp.rows.map(row => row.pp);
+
+      pageUser += '<img style="display:block; text-align:center;margin:auto; width: 100px; height:100px;border: solid black; border-radius: 40px; margin-bottom: 20px;" src="'+ppRes+'">';
+      pageUser += '<div class="container">';
+      const imageNb = data3.split('=')[1];
+      console.log(imageNb);
+      const verifyEx = await client.query("Select count(*) from images as i cross join utilisateurs as u where file_path = '/public/image"+imageNb+".jpg' and i.username_fk = u.username and u.username = '"+userID+"'")
+      const verifyExRes = parseInt(verifyEx.rows.map(row => row.count));
+      if (verifyExRes < 1){
+        const queryImgVal = client.query("Insert into images (file_path,username_fk) Values('/public/image"+imageNb+".jpg','"+userID+"')");
+        console.log("info sent");
+        const queryPath = await client.query("select file_path from images as i cross join utilisateurs as u where u.username = i.username_fk and u.username = '"+userID+"'");
+        const queryPathRes = queryPath.rows.map(row => row.file_path);
+        console.log(queryPathRes);
+        for(let i = 0; i < queryPathRes.length; i++){
+          pageUser += '<div class="item"><img class="omak" src='+queryPathRes[i]+'><div class="like"><a href="/liked/'+userID+'"><button id="like-button"><img class="image-inlike" src="/public/Joah.jpg"></button></a></div></div>';
+        }
+        pageUser += '</div><p style="font-size: 0px;" id="user-id">'+userID+'</p>'
+        pageUser += `<script src="/public/test.js"></script>`;
+        pageUser += '</body></html>';
+        res.end(pageUser);
+      } else {
+        const queryPath = await client.query("select file_path from images as i cross join utilisateurs as u where u.username = i.username_fk and u.username = '"+userID+"'");
+        const queryPathRes = queryPath.rows.map(row => row.file_path);
+        for(let i = 0; i < queryPathRes.length; i++){
+          pageUser += '<div class="item"><img class="omak" src='+queryPathRes[i]+'><div class="like"><a href="/liked/'+userID+'"><button id="like-button"><img class="image-inlike" src="/public/Joah.jpg"></button></a></div></div>';
+        }
+        pageUser += '</div><p style="color:red;">Image already posted</p>';
+        pageUser += '<p style="font-size: 0px;" id="user-id">'+userID+'</p>'
+        pageUser += `<script src="/public/test.js"></script>`;
+        pageUser += '</body></html>';
+        res.end(pageUser);
+      }
+     
+    })
+   
+  } else if (req.url.startsWith('/liked')){
+    const userName = req.url.split('/')[2];
+    const userID = userName.replace("user","");
+    console.log(userName);
+    console.log(userID);
+
+    const sqlQuery = "SELECT id FROM images where id"
+  }
 });
 
 
-app.get('/image/:id', async (req,res) => {
-    const id = req.params.id
-    try{
-        const sqlQuery = await client.query("SELECT fichier FROM photos WHERE id = "+id+"");
-        const sqlRes = sqlQuery.rows[0].fichier;
+/*Select count(*) from likes as l cross join utilisateurs as u cross join images as i where l.username_fk = u.username and l.image_fk = i.id and username= 'user2' and file_path = '/public/image1.jpg';*/
 
-        const sqlQueryNom = await client.query("SELECT nom FROM photos WHERE id="+id+"");
-        const sqlQueryNomRes = (sqlQueryNom.rows[0].nom);
-        console.log(sqlQueryNomRes.toString());
-
-        const sqlComment = await client.query("SELECT texte from commentaires where id_photo="+id+"");
-
-        if (sqlComment.rowCount === 0){
-            const sqlCommentRes = "NO COMMENT";
-            res.render('image', {image: sqlRes, id, nom: sqlQueryNomRes.toString(), Comments: sqlCommentRes/*.toString()*/});
-        } else {
-            const sqlCommentRes = sqlComment.rows.map(row => row.texte);
-            res.render('image', {image: sqlRes, id, nom: sqlQueryNomRes.toString(), Comments: sqlCommentRes/*.toString()*/});
-        }
-    } catch(e) {
-        console.log(e);
-    }
-})
-
-app.post('/image/:id', async(req,res) => {
-    const id = req.params.id
-    try{
-        let data;
-
-        req.on('data', (dataChunk) =>{
-            data += dataChunk.toString();
-        });
-
-        req.on('end', async () =>{
-            try{
-                const Split = data.split('=');
-                const NewComment = Split[1].replace("+"," ");
-                const sqlInsert = await client.query("INSERT INTO commentaires (texte, id_photo) VALUES ( '"+NewComment+"' , "+id+" )");
-            } catch(e) {
-                console.log(e);
-            }
-            
-        })
-
-        const sqlQuery = await client.query("SELECT fichier FROM photos WHERE id = "+id+" ORDER BY id");
-        const sqlRes = sqlQuery.rows[0].fichier;
-
-        const sqlQueryNom = await client.query("SELECT nom FROM photos WHERE id="+id+"");
-        const sqlQueryNomRes = (sqlQueryNom.rows[0].nom);
-        console.log(sqlQueryNomRes.toString());
-
-        const sqlComment = await client.query("SELECT texte from commentaires where id_photo="+id+"");
-
-        if (sqlComment.rowCount === 0){
-            const sqlCommentRes = "NO COMMENT";
-            res.render('image', {image: sqlRes, id, nom: sqlQueryNomRes.toString(), Comments: sqlCommentRes/*.toString()*/});
-        } else {
-            const sqlCommentRes = sqlComment.rows.map(row => row.texte);
-            res.render('image', {image: sqlRes, id, nom: sqlQueryNomRes.toString(), Comments: sqlCommentRes/*.toString()*/});
-        }
-    } catch(e) {
-        console.log(e);
-    }
-    
-})
-
-
-app.get('/image/:id/liked', async (req,res) => {
-    const id = req.params.id;
-    const sqlLike = await client.query("UPDATE photos SET likes = likes + 1 WHERE photos.id =" + id);
-    res.redirect('/image/' + id);
-})
-
-
-
-app.get('/mur-images/date', async (req,res) => {
-    try{
-        const sqlQuery = await client.query("SELECT fichier FROM photos ORDER BY date DESC");
-        const sqlQuery2 = await client.query("SELECT id FROM photos ORDER BY date DESC");
-        const fichierImage = sqlQuery.rows.map(row => row.fichier);
-        const fichierID = sqlQuery2.rows.map(row => row.id);
-
-        res.render('mur', {images: fichierImage, id: fichierID});
-
-    } catch(e) {
-        console.log(e);
-    }
-})
-
-
-app.get('/mur-images/like', async (req,res) => {
-    try{
-        const sqlQuery = await client.query("SELECT fichier FROM photos ORDER BY likes DESC");
-        const sqlQuery2 = await client.query("SELECT id FROM photos ORDER BY likes DESC");
-        const fichierImage = sqlQuery.rows.map(row => row.fichier);
-        const fichierID = sqlQuery2.rows.map(row => row.id);
-
-        res.render('mur', {images: fichierImage, id: fichierID});
-
-    } catch(e) {
-        console.log(e);
-    }
-})
-
-app.get('/mur-images/photographe', async (req,res) => {
-    try{
-        const sqlQuery = await client.query("SELECT fichier FROM photos ORDER BY id_photographe");
-        const sqlQuery2 = await client.query("SELECT id FROM photos ORDER BY id_photographe");
-        const fichierImage = sqlQuery.rows.map(row => row.fichier);
-        const fichierID = sqlQuery2.rows.map(row => row.id);
-
-        res.render('mur', {images: fichierImage, id: fichierID});
-
-    } catch(e) {
-        console.log(e);
-    }
-})
-
-app.get('/mur-images/orientation', async (req,res) => {
-    try{
-        const sqlQuery = await client.query("SELECT fichier FROM photos ORDER BY orientation");
-        const sqlQuery2 = await client.query("SELECT id FROM photos ORDER BY orientation");
-        const fichierImage = sqlQuery.rows.map(row => row.fichier);
-        const fichierID = sqlQuery2.rows.map(row => row.id);
-
-        res.render('mur', {images: fichierImage, id: fichierID});
-
-    } catch(e) {
-        console.log(e);
-    }
-})
-
-
-
-
-
-app.get('/add-image', async(req,res) => {
-    try{
-        console.log('in get image');
-        res.render('form');
-    } catch (e) {
-        console.log(e)
-    }
-})
-
-
-
-
-app.post('/add-image', async (req,res) =>{
-    console.log('in add image');
-    try{
-
-        let dataAdd;
-        console.log(' in the try ');
-
-        req.on('data', (dataChunk2) =>{
-            console.log('in data fuck');
-            dataAdd += dataChunk2.toString();
-        })
-
-
-        req.on('end', async() =>{
-            try{
-                console.log(dataAdd)
-                const Split = dataAdd.split('&');
-                const imgName = Split[0].split('=')[1];
-                console.log("This is the image name" +imgName);
-                const imgDate = Split[1].split('=')[1];
-                console.log("This is the image Date" +imgDate);
-                const imgOri = Split[2].split('=')[1];
-                console.log("This is the image Ori" +imgOri);
-                const imgNb = Split[3].split('=')[1];
-                const filePath = "image"+imgNb+".jpg"
-                const imgPhotog = Split[4].split('=')[1];
-                console.log("This is the image Photog" +imgPhotog);
-
-                const sqlAddImg = await client.query("INSERT INTO photos (nom, date, orientation, fichier, id_photographe) VALUES ('"+imgName+"','"+imgDate+"', "+imgOri+" ,'"+filePath+"', "+imgPhotog+" )");
-                
-
-            } catch (e) {
-                console.log(e)
-            }
-        })
-
-        res.render('form');
-    } catch(e) {
-        console.log(e)
-    }
-})
-
-
-
-
-// setup EJS
-app.set('view engine', 'ejs');
-app.set('views', './ejs-templates');
-
-app.listen(port, host, () =>{
-    console.log(`Server running at http://${host}:${port}/`);
-})
+server.listen(port, host, () => {
+  console.log("Server is running");
+});
